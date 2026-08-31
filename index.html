@@ -1,138 +1,255 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
+
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+>
 
 <title>Infinite Slop</title>
 
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+<script src="hls.min.js"></script>
 
 <style>
+
 html,
 body {
     width: 100%;
     height: 100%;
     margin: 0;
     padding: 0;
+
     background: #000;
+
     overflow: hidden;
 }
 
 video {
+    position: absolute;
+
+    top: 0;
+    left: 0;
+
     width: 100%;
     height: 100%;
-    display: block;
+
     object-fit: contain;
+
     background: #000;
 }
+
 </style>
+
 </head>
 
 <body>
 
 <video
-    id="video"
-    autoplay
+    id="tv"
     muted
-    playsinline
-    controls>
+    autoplay
+    playsinline>
 </video>
 
 <script>
-(function () {
 
-    const video = document.getElementById("video");
+const PLAYLIST =
+    'https://infiniteslop.ai/live/playlist.m3u8';
 
-    const stream =
-        "https://infiniteslop.ai/live/playlist.m3u8";
+const tv =
+    document.getElementById('tv');
 
-    /*
-     * Chrome/Android generally requires muted
-     * playback for autoplay.
-     */
+let usingHls = false;
 
-    video.muted = true;
+let hlsRef = null;
 
-    /*
-     * Safari/iOS can play HLS natively.
-     */
 
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+/* --------------------------------------------------
+   Start Infinite Slop live stream
+-------------------------------------------------- */
 
-        video.src = stream;
-
-        video.addEventListener("loadedmetadata", function () {
-
-            video.play().catch(function () {
-                console.log("Autoplay blocked.");
-            });
-
-        });
-
-        return;
-    }
+function startVideo() {
 
     /*
-     * Chrome/Firefox/Android:
-     * use hls.js.
+     * HLS.js
      */
 
-    if (Hls.isSupported()) {
+    if (
+        window.Hls &&
+        Hls.isSupported()
+    ) {
 
-        const hls = new Hls({
-            liveSyncDurationCount: 3
-        });
+        usingHls = true;
 
-        hls.loadSource(stream);
+        const h =
+            hlsRef =
+                new Hls({
+                    liveSyncDurationCount: 2
+                });
 
-        hls.attachMedia(video);
 
-        hls.on(Hls.Events.MANIFEST_PARSED, function () {
+        h.loadSource(PLAYLIST);
 
-            video.play().catch(function () {
-                console.log("Autoplay blocked.");
-            });
+        h.attachMedia(tv);
 
-        });
 
         /*
-         * Recover from temporary live-stream errors.
+         * Infinite Slop's FRAG_CHANGED
+         *
+         * We don't need their clip/replay system,
+         * but we keep the event because it is part
+         * of their live-player behavior.
          */
 
-        hls.on(Hls.Events.ERROR, function (event, data) {
+        h.on(
+            Hls.Events.FRAG_CHANGED,
+            (_, d) => {
 
-            if (!data.fatal) {
-                return;
-            }
-
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-
-                console.log("HLS network error. Retrying...");
-
-                hls.startLoad();
-
-            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-
-                console.log("HLS media error. Recovering...");
-
-                hls.recoverMediaError();
+                /*
+                 * The live playlist is advancing.
+                 *
+                 * Nothing else is required here
+                 * for our standalone player.
+                 */
 
             }
+        );
 
-        });
 
-        return;
+        /*
+         * Infinite Slop explicitly positions the
+         * player on the newest fragment when the
+         * playlist first loads.
+         */
+
+        let positioned = false;
+
+        h.on(
+            Hls.Events.LEVEL_LOADED,
+            (_, d) => {
+
+                if (positioned) {
+                    return;
+                }
+
+                positioned = true;
+
+
+                let best = null;
+
+                let bestId = -1;
+
+
+                for (
+                    const f of d.details.fragments
+                ) {
+
+                    const n =
+                        parseInt(
+                            f.url
+                                .split('/')
+                                .pop()
+                                .split('?')[0],
+                            10
+                        );
+
+
+                    if (
+                        !isNaN(n) &&
+                        n > bestId
+                    ) {
+
+                        bestId = n;
+
+                        best = f;
+
+                    }
+
+                }
+
+
+                if (best) {
+
+                    tv.currentTime =
+                        best.start + 0.05;
+
+                }
+
+            }
+        );
+
+
+        /*
+         * Same fatal-error recovery as Infinite Slop.
+         */
+
+        h.on(
+            Hls.Events.ERROR,
+            (_, d) => {
+
+                if (!d.fatal) {
+                    return;
+                }
+
+
+                setTimeout(
+                    () => {
+
+                        try {
+                            h.destroy();
+                        } catch (e) {}
+
+
+                        hlsRef = null;
+
+
+                        startVideo();
+
+                    },
+                    3000
+                );
+
+            }
+        );
+
     }
 
-    document.body.innerHTML =
-        '<div style="color:white;font-family:sans-serif;text-align:center;padding-top:40px;">' +
-        'HLS playback is not supported by this browser.' +
-        '</div>';
+    /*
+     * Native HLS fallback.
+     */
 
-})();
+    else if (
+        tv.canPlayType(
+            'application/vnd.apple.mpegurl'
+        )
+    ) {
+
+        tv.src = PLAYLIST;
+
+    }
+
+
+    /*
+     * Start playback.
+     */
+
+    tv.play().catch(() => {});
+
+}
+
+
+/* --------------------------------------------------
+   Start
+-------------------------------------------------- */
+
+startVideo();
 
 </script>
 
 </body>
+
 </html>
