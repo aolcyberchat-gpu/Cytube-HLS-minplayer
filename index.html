@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>CyTube HLS + P2P Media Loader Test</title>
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:900px;margin:0 auto;padding:16px;background:#111;color:#eee}
+    h1{font-size:1.25rem}
+    video{width:100%;max-height:60vh;background:#000}
+    button{padding:10px 14px;margin:6px 6px 6px 0}
+    #status{padding:10px;background:#222;border:1px solid #444;margin:10px 0}
+    pre{white-space:pre-wrap;word-break:break-word;background:#000;padding:10px;max-height:45vh;overflow:auto;font-size:12px}
+    .ok{color:#7cff7c}.warn{color:#ffd166}.err{color:#ff7777}
+  </style>
+</head>
+<body>
+  <h1>CyTube HLS + P2P Media Loader Test</h1>
+
+  <video id="video" controls playsinline></video>
+
+  <div id="status">Loading test page…</div>
+
+  <button id="start">Start / Restart</button>
+  <button id="copy">Copy diagnostics</button>
+  <button id="clear">Clear log</button>
+
+  <pre id="log"></pre>
+
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/p2p-media-loader-hlsjs@4.0.0/dist/p2p-media-loader-hlsjs.iife.min.js"></script>
+
+  <script>
+  (() => {
+    const MANIFEST = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8";
+    const TRACKERS = [
+      "wss://tracker.novage.com.ua",
+      "wss://tracker.webtorrent.dev",
+      "wss://tracker.openwebtorrent.com"
+    ];
+
+    const video = document.getElementById("video");
+    const status = document.getElementById("status");
+    const logEl = document.getElementById("log");
+
+    let hls = null;
+    let lines = [];
+
+    function safe(value) {
+      try {
+        if (value === undefined) return "";
+        if (typeof value === "string") return value;
+        return JSON.stringify(value, (key, val) => {
+          if (val instanceof Error) return {name: val.name, message: val.message, stack: val.stack};
+          return val;
+        });
+      } catch (_) {
+        return String(value);
+      }
+    }
+
+    function log(type, data) {
+      const stamp = new Date().toISOString();
+      const line = "[" + stamp + "] " + type + (data === undefined ? "" : " " + safe(data));
+      lines.push(line);
+      if (lines.length > 500) lines.shift();
+      logEl.textContent = lines.join("\n");
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setStatus(text, cls) {
+      status.className = cls || "";
+      status.textContent = text;
+    }
+
+    function stop() {
+      if (hls) {
+        try { hls.destroy(); } catch (_) {}
+        hls = null;
+      }
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    }
+
+    async function start() {
+      stop();
+      log("START_REQUESTED", {manifest: MANIFEST});
+      log("BROWSER", {
+        userAgent: navigator.userAgent,
+        mediaSource: !!window.MediaSource,
+        hlsJsVersion: window.Hls ? Hls.version : null,
+        p2pml: !!window.p2pml
+      });
+
+      if (!window.Hls) {
+        setStatus("ERROR: Hls.js failed to load", "err");
+        log("ERROR", "Hls.js global is missing");
+        return;
+      }
+
+      if (!window.p2pml || !p2pml.hlsjs || !p2pml.hlsjs.HlsJsP2PEngine) {
+        setStatus("ERROR: p2p-media-loader failed to load", "err");
+        log("ERROR", "p2pml.hlsjs.HlsJsP2PEngine is missing");
+        return;
+      }
+
+      if (!Hls.isSupported()) {
+        setStatus("Hls.js is not supported in this browser", "warn");
+        log("HLS_NOT_SUPPORTED");
+        return;
+      }
+
+      const HlsWithP2P = p2pml.hlsjs.HlsJsP2PEngine.injectMixin(Hls);
+
+      log("P2P_MIXIN_READY", {
+        engine: "HlsJsP2PEngine",
+        trackers: TRACKERS
+      });
+
+      hls = new HlsWithP2P({
+        p2p: {
+          core: {
+            announceTrackers: TRACKERS
+          },
+          onHlsJsCreated(instance) {
+            log("P2P_ENGINE_CREATED");
+
+            if (!instance.p2pEngine) {
+              log("P2P_ENGINE_MISSING");
+              return;
+            }
+
+            const engine = instance.p2pEngine;
+
+            try {
+              engine.addEventListener("onSegmentLoaded", details => {
+                log("P2P_SEGMENT_LOADED", details);
+              });
+            } catch (e) {
+              log("P2P_EVENT_ERROR", {event:"onSegmentLoaded", error:e.message});
+            }
+
+            try {
+              engine.addEventListener("onChunkDownloaded", (bytesLength, source, peerId) => {
+                log("P2P_CHUNK_DOWNLOADED", {
+                  bytesLength,
+                  source,
+                  peerId: peerId || null
+                });
+              });
+            } catch (e) {
+              log("P2P_EVENT_ERROR", {event:"onChunkDownloaded", error:e.message});
+            }
+
+            try {
+              engine.addEventListener("onChunkUploaded", (bytesLength, peerId) => {
+                log("P2P_CHUNK_UPLOADED", {
+                  bytesLength,
+                  peerId: peerId || null
+                });
+              });
+            } catch (e) {
+              log("P2P_EVENT_ERROR", {event:"onChunkUploaded", error:e.message});
+            }
+
+            try {
+              engine.addEventListener("onStreamAdded", details => {
+                log("P2P_STREAM_ADDED", details);
+              });
+            } catch (e) {
+              log("P2P_EVENT_ERROR", {event:"onStreamAdded", error:e.message});
+            }
+          }
+        }
+      });
+
+      hls.on(Hls.Events.MANIFEST_LOADING, (_, data) => {
+        log("HLS_MANIFEST_LOADING", {url: data && data.url});
+      });
+
+      hls.on(Hls.Events.MANIFEST_PARSED, (_, data) => {
+        log("HLS_MANIFEST_PARSED", {
+          levels: data && data.levels ? data.levels.length : null
+        });
+        setStatus("HLS manifest parsed; playback starting", "ok");
+        video.play().then(() => log("VIDEO_PLAYING")).catch(e => log("VIDEO_PLAY_REJECTED", e.message));
+      });
+
+      hls.on(Hls.Events.FRAG_LOADING, (_, data) => {
+        log("HLS_FRAG_LOADING", {
+          url: data && data.frag ? data.frag.url : null,
+          sn: data && data.frag ? data.frag.sn : null
+        });
+      });
+
+      hls.on(Hls.Events.FRAG_LOADED, (_, data) => {
+        log("HLS_FRAG_LOADED", {
+          url: data && data.frag ? data.frag.url : null,
+          sn: data && data.frag ? data.frag.sn : null,
+          bytes: data && data.payload ? data.payload.byteLength : null
+        });
+      });
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        log("HLS_ERROR", data);
+        if (data && data.fatal) {
+          setStatus("Fatal HLS error — see diagnostics", "err");
+        }
+      });
+
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        log("HLS_MEDIA_ATTACHED");
+      });
+
+      hls.attachMedia(video);
+      hls.loadSource(MANIFEST);
+
+      log("HLS_SOURCE_LOADED", {manifest: MANIFEST});
+      setStatus("HLS + P2P initialized; waiting for manifest…");
+    }
+
+    document.getElementById("start").addEventListener("click", start);
+
+    document.getElementById("clear").addEventListener("click", () => {
+      lines = [];
+      logEl.textContent = "";
+      log("LOG_CLEARED");
+    });
+
+    document.getElementById("copy").addEventListener("click", async () => {
+      const text = lines.join("\n");
+      try {
+        await navigator.clipboard.writeText(text);
+        setStatus("Diagnostics copied to clipboard", "ok");
+        log("DIAGNOSTICS_COPIED");
+      } catch (e) {
+        setStatus("Clipboard copy failed", "err");
+        log("CLIPBOARD_ERROR", e.message);
+      }
+    });
+
+    window.addEventListener("beforeunload", stop);
+
+    log("DIAGNOSTIC_PAGE_READY", {
+      manifest: MANIFEST,
+      hlsJs: "1.7.3",
+      p2pMediaLoaderHlsJs: "4.0.0"
+    });
+
+    start();
+  })();
+  </script>
+</body>
+</html>
