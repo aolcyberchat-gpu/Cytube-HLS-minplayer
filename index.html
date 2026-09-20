@@ -134,6 +134,22 @@
             const engine = instance.p2pEngine;
 
             try {
+              engine.addEventListener("onPeerConnect", details => {
+                log("P2P_PEER_CONNECTED", details);
+              });
+            } catch (e) {
+              log("P2P_EVENT_ERROR", {event:"onPeerConnect", error:e.message});
+            }
+
+            try {
+              engine.addEventListener("onPeerClose", details => {
+                log("P2P_PEER_CLOSED", details);
+              });
+            } catch (e) {
+              log("P2P_EVENT_ERROR", {event:"onPeerClose", error:e.message});
+            }
+
+            try {
               engine.addEventListener("onSegmentLoaded", details => {
                 log("P2P_SEGMENT_LOADED", details);
               });
