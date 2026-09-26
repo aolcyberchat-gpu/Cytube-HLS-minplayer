@@ -1,0 +1,360 @@
+name: build-hivestream-v125
+
+on:
+  push:
+    paths:
+      - .hivestream-v125-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch and transform v12.4.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/duckwerks/HiveStream/refs/heads/main/index.html -o /tmp/v12.4.1.html
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          src = Path('/tmp/v12.4.1.html').read_text(encoding='utf-8')
+          lines = src.splitlines()
+          if len(lines) < 3300:
+              raise SystemExit(f'ERROR: source unexpectedly short: {len(lines)} lines')
+          if 'HiveStream Phase 1B — Natural Swarm Diagnostic v12.4.1' not in src:
+              raise SystemExit('ERROR: v12.4.1 source marker missing')
+          if 'p2p-media-loader-hlsjs@4.0.0' not in src:
+              raise SystemExit('ERROR: pinned p2p-media-loader-hlsjs 4.0.0 marker missing')
+          if 'hls.js@1.7.0' not in src:
+              raise SystemExit('ERROR: pinned hls.js 1.7.0 marker missing')
+
+          # Version normalization only; do not alter the pinned dependency versions.
+          src = src.replace('Natural Swarm Diagnostic v12.4.1', 'Natural Swarm Diagnostic v12.5.0')
+          src = src.replace('version: "12.4.1.1"', 'version: "12.5.0"')
+          src = src.replace('instrumentationVersion: "12.4.1.1"', 'instrumentationVersion: "12.5.0"')
+
+          # Fix the real peer -> browser-PC attribution bug. The global array stores
+          # native RTCPeerConnection objects; the diagnostic record lives on pc.__hsV11.
+          old = '''var all = window.__HS_V11_PEER_CONNECTIONS || [];
+    var runId = R.identity && R.identity.runId;
+    var open = all.filter(function(p){ return p && p.runId === runId && !p.closed; });
+    var unclaimed = open.filter(function(p){ return !p.peerId; });'''
+          new = '''var all = window.__HS_V11_PEER_CONNECTIONS || [];
+    var runId = R.identity && R.identity.runId;
+    var open = all.map(function(pc){
+      return pc && pc.__hsV11 ? pc.__hsV11 : null;
+    }).filter(function(record){
+      return record && record.runId === runId && !record.closed;
+    });
+    var unclaimed = open.filter(function(record){ return !record.peerId; });'''
+          if old not in src:
+              raise SystemExit('ERROR: expected peer-correlation block not found')
+          src = src.replace(old, new, 1)
+
+          # Add bounded HLS fragment lifecycle correlation helpers immediately before
+          # attachHlsEvents(). This uses only public hls.js lifecycle events.
+          marker = '  function attachHlsEvents() {\n'
+          helpers = r'''  function ensureHlsCorrelationState() {
+    if (!R.hlsCorrelation) {
+      R.hlsCorrelation = {
+        fragments: [],
+        byUrl: {},
+        changed: [],
+        matches: [],
+        evidence: []
+      };
+    }
+    return R.hlsCorrelation;
+  }
+
+  function normalizeFragmentUrl(url) {
+    if (!url) return null;
+    try {
+      return new URL(String(url), R.configuration.streamUrl || DEFAULT_STREAM).href;
+    } catch (e) {
+      return String(url);
+    }
+  }
+
+  function hlsFragmentRecord(kind, frag) {
+    if (!frag) return null;
+    var url = normalizeFragmentUrl(frag.url || frag.relurl || null);
+    return {
+      at: now(),
+      event: kind,
+      levelIndex: frag.level == null ? null : Number(frag.level),
+      sn: frag.sn == null ? null : Number(frag.sn),
+      url: url,
+      start: frag.start == null ? null : Number(frag.start),
+      duration: frag.duration == null ? null : Number(frag.duration),
+      type: frag.type || null,
+      cc: frag.cc == null ? null : Number(frag.cc),
+      runtimeId: url
+    };
+  }
+
+  function recordHlsFragmentLifecycle(kind, frag) {
+    var rec = hlsFragmentRecord(kind, frag);
+    if (!rec) return null;
+    var c = ensureHlsCorrelationState();
+    boundedPush(c.fragments, rec);
+    if (rec.url) c.byUrl[rec.url] = rec;
+    if (kind === "changed") boundedPush(c.changed, rec);
+    log("hls:fragment-lifecycle", rec);
+    return rec;
+  }
+
+  function findHlsFragmentForP2PSegment(seg) {
+    var c = ensureHlsCorrelationState();
+    var p2p = seg && seg.segment ? seg.segment : null;
+    if (!p2p) return null;
+
+    var p2pUrl = normalizeFragmentUrl(p2p.url || seg.segmentUrl || null);
+    if (p2pUrl && c.byUrl[p2pUrl]) {
+      return {
+        match: c.byUrl[p2pUrl],
+        method: "url-exact"
+      };
+    }
+
+    var externalId = p2p.externalId == null ? null : Number(p2p.externalId);
+    if (externalId != null) {
+      var sameSn = c.fragments.filter(function (f) {
+        return f && f.sn === externalId;
+      });
+      if (sameSn.length === 1) {
+        return { match: sameSn[0], method: "sn-unique" };
+      }
+    }
+
+    return null;
+  }
+
+  function correlateP2PSegmentWithHls(seg) {
+    var result = findHlsFragmentForP2PSegment(seg);
+    if (!result) {
+      log("proof:hls-p2p-correlation-miss", {
+        peerId: seg && seg.peerId || null,
+        infoHash: seg && seg.infoHash || null,
+        segment: seg && seg.segment || null
+      });
+      return null;
+    }
+
+    var frag = result.match;
+    var controlledLevel = R.selectedVariant && R.selectedVariant.levelIndex;
+    var controlled = variantValue() === "480" &&
+      R.selectedVariant && R.selectedVariant.found &&
+      controlledLevel != null && frag.levelIndex === controlledLevel;
+
+    var evidence = {
+      at: now(),
+      method: result.method,
+      controlledVariant: controlled,
+      controlledLevelIndex: controlledLevel == null ? null : Number(controlledLevel),
+      hls: cloneJson(frag),
+      p2p: cloneJson(seg),
+      browserPc: null,
+      ice: null
+    };
+
+    if (seg.peerId) {
+      var matchingPcs = (window.__HS_V11_PEER_CONNECTIONS || []).map(function (pc) {
+        return pc && pc.__hsV11 ? pc.__hsV11 : null;
+      }).filter(function (record) {
+        return record && record.runId === R.identity.runId &&
+          !record.closed && record.peerId === seg.peerId;
+      });
+
+      if (matchingPcs.length === 1) {
+        var pcRecord = matchingPcs[0];
+        evidence.browserPc = {
+          pcId: pcRecord.pcId || null,
+          peerId: pcRecord.peerId || null,
+          correlationConfidence: pcRecord.peerCorrelationConfidence || null,
+          selectedCandidatePairId: pcRecord.stats && pcRecord.stats.selectedCandidatePairId || null,
+          selectedCandidatePair: pcRecord.stats && pcRecord.stats.selectedCandidatePair
+            ? cloneJson(pcRecord.stats.selectedCandidatePair) : null
+        };
+        evidence.ice = pcRecord.stats && pcRecord.stats.selectedCandidatePair
+          ? {
+              pairId: pcRecord.stats.selectedCandidatePair.pairId || null,
+              local: cloneJson(pcRecord.stats.selectedCandidatePair.local),
+              remote: cloneJson(pcRecord.stats.selectedCandidatePair.remote),
+              state: pcRecord.stats.selectedCandidatePair.state || null,
+              selected: !!pcRecord.stats.selectedCandidatePair.selected
+            }
+          : null;
+      } else if (matchingPcs.length > 1) {
+        evidence.browserPc = {
+          ambiguous: true,
+          candidatePcIds: matchingPcs.map(function (record) { return record.pcId || null; })
+        };
+      }
+    }
+
+    boundedPush(ensureHlsCorrelationState().matches, evidence);
+
+    var decisive = controlled &&
+      seg.sourceClassification === "p2p" &&
+      Number(seg.bytesLength || 0) > 0 &&
+      !!seg.peerId &&
+      !!seg.infoHash &&
+      !!R.swarm.controlledInfoHash &&
+      seg.infoHash === R.swarm.controlledInfoHash;
+
+    if (decisive) {
+      R.verdict.p2pSegmentMatchedSelectedVariant = true;
+      boundedPush(ensureHlsCorrelationState().evidence, evidence);
+      log("proof:hls-p2p-correlation", {
+        decisive: true,
+        method: result.method,
+        levelIndex: frag.levelIndex,
+        sn: frag.sn,
+        url: frag.url,
+        peerId: seg.peerId,
+        infoHash: seg.infoHash,
+        bytesLength: seg.bytesLength,
+        browserPc: evidence.browserPc,
+        ice: evidence.ice
+      });
+    } else {
+      log("proof:hls-p2p-correlation", {
+        decisive: false,
+        method: result.method,
+        controlledVariant: controlled,
+        levelIndex: frag.levelIndex,
+        sn: frag.sn,
+        url: frag.url,
+        peerId: seg.peerId || null,
+        infoHash: seg.infoHash || null,
+        controlledInfoHash: R.swarm.controlledInfoHash || null,
+        bytesLength: seg.bytesLength
+      });
+    }
+
+    return evidence;
+  }
+
+'''
+          if marker not in src:
+              raise SystemExit('ERROR: attachHlsEvents marker not found')
+          src = src.replace(marker, helpers + marker, 1)
+
+          # Wire the three actual fragment lifecycle events required for rendition proof.
+          marker = '''    hlsInstance.on(Hls.Events.LEVEL_SWITCHED, function (e, d) {\n'''
+          lifecycle = '''    hlsInstance.on(Hls.Events.FRAG_LOADING, function (e, d) {\n      if (!isCurrentRun()) return;\n      recordHlsFragmentLifecycle("loading", d && d.frag);\n    });\n\n    hlsInstance.on(Hls.Events.FRAG_LOADED, function (e, d) {\n      if (!isCurrentRun()) return;\n      recordHlsFragmentLifecycle("loaded", d && d.frag);\n    });\n\n    hlsInstance.on(Hls.Events.FRAG_CHANGED, function (e, d) {\n      if (!isCurrentRun()) return;\n      recordHlsFragmentLifecycle("changed", d && d.frag);\n    });\n\n'''
+          if marker not in src:
+              raise SystemExit('ERROR: LEVEL_SWITCHED marker not found')
+          src = src.replace(marker, lifecycle + marker, 1)
+
+          # Replace the old infoHash-only rendition proof with actual HLS↔P2P correlation.
+          old = '''      if (isP2P) {\n        R.verdict.p2pSegmentLoaded = true;\n        if (R.swarm.controlledInfoHash &&\n            seg.infoHash === R.swarm.controlledInfoHash) {\n          R.verdict.p2pSegmentMatchedSelectedVariant = true;\n        }\n      }\n'''
+          new = '''      if (isP2P) {\n        R.verdict.p2pSegmentLoaded = true;\n        correlateP2PSegmentWithHls(seg);\n      }\n'''
+          if old not in src:
+              raise SystemExit('ERROR: old P2P rendition-proof block not found')
+          src = src.replace(old, new, 1)
+
+          # Add first-class relay discovery vs selected-pair relay fields.
+          old = '''      candidatePairSelectedObserved: false,\n      dataChannelOpenedObserved: false,'''
+          new = '''      candidatePairSelectedObserved: false,\n      relayCandidateDiscovered: false,\n      selectedPairUsesRelay: false,\n      dataChannelOpenedObserved: false,'''
+          if old not in src:
+              raise SystemExit('ERROR: connectivity candidate-pair marker not found')
+          src = src.replace(old, new, 1)
+
+          # Candidate classification: explicitly distinguish hostname/mDNS from IPv4/IPv6.
+          old = '''    if (a.indexOf(\":\") >= 0) family = \"IPv6\";\n    else if (/^\\d+(?:\\.\\d+){3}$/.test(a)) family = \"IPv4\";'''
+          new = '''    if (a.indexOf(\":\") >= 0) family = \"IPv6\";\n    else if (/^\\d+(?:\\.\\d+){3}$/.test(a)) family = \"IPv4\";\n    else if (/\\.local$/i.test(a) || /^[a-z0-9-]+(?:\\.[a-z0-9-]+)+$/i.test(a)) family = \"hostname/mDNS\";'''
+          if old not in src:
+              raise SystemExit('ERROR: parseCandidate family block not found')
+          src = src.replace(old, new, 1)
+
+          old = '''    if (address && address.indexOf(\":\") >= 0) family = \"IPv6\";\n    else if (address && /^\\d+(?:\\.\\d+){3}$/.test(address)) family = \"IPv4\";'''
+          new = '''    if (address && address.indexOf(\":\") >= 0) family = \"IPv6\";\n    else if (address && /^\\d+(?:\\.\\d+){3}$/.test(address)) family = \"IPv4\";\n    else if (address && (/\\.local$/i.test(address) || /^[a-z0-9-]+(?:\\.[a-z0-9-]+)+$/i.test(address))) family = \"hostname/mDNS\";'''
+          if old not in src:
+              raise SystemExit('ERROR: summarizeCandidateStat family block not found')
+          src = src.replace(old, new, 1)
+
+          # Record relay discovery and the selected pair's actual candidate types from getStats().
+          old = '''          if (summary.selected) {\n            browserRec.stats.selectedCandidatePairId = s.id || null;'''
+          new = '''          if (summary.local && summary.local.candidateType === \"relay\" ||\n              summary.remote && summary.remote.candidateType === \"relay\") {\n            R.connectivity.relayCandidateDiscovered = true;\n          }\n\n          if (summary.selected) {\n            browserRec.stats.selectedCandidatePairId = s.id || null;\n            if (summary.local && summary.local.candidateType === \"relay\" ||\n                summary.remote && summary.remote.candidateType === \"relay\") {\n              R.connectivity.selectedPairUsesRelay = true;\n            }'''
+          if old not in src:
+              raise SystemExit('ERROR: candidate-pair selected block not found')
+          src = src.replace(old, new, 1)
+
+          # Ensure resetRun initializes the new lazy correlation state cleanly.
+          # It is created lazily, but deleting an old run's object avoids accidental carry-over.
+          marker = '''    R = {\n      test: {'''
+          replacement = '''    R = {\n      hlsCorrelation: null,\n      test: {'''
+          # Only alter the reset-run state object; startup R remains the original canonical source.
+          if marker not in src:
+              raise SystemExit('ERROR: resetRun state marker not found')
+          src = src.replace(marker, replacement, 1)
+
+          # Add a small explicit proof note to the report without changing the strict gate.
+          old = '''    R.verdict.proof =\n      !!R.selectedVariant.found &&\n      !!R.swarm.controlledInfoHash &&\n      R.verdict.p2pChunkBytesReceived &&\n      R.verdict.p2pSegmentMatchedSelectedVariant;'''
+          new = '''    R.verdict.proof =\n      !!R.selectedVariant.found &&\n      !!R.swarm.controlledInfoHash &&\n      R.verdict.p2pChunkBytesReceived &&\n      R.verdict.p2pSegmentMatchedSelectedVariant;\n\n    R.verdict.proofEvidenceCount = R.hlsCorrelation &&\n      Array.isArray(R.hlsCorrelation.evidence)\n        ? R.hlsCorrelation.evidence.length\n        : 0;'''
+          if old not in src:
+              raise SystemExit('ERROR: proof gate not found')
+          src = src.replace(old, new, 1)
+
+          # Basic source-level assertions for the resulting implementation.
+          required = [
+              'FRAG_LOADING', 'FRAG_LOADED', 'FRAG_CHANGED',
+              'correlateP2PSegmentWithHls',
+              'peerCorrelationConfidence',
+              'relayCandidateDiscovered', 'selectedPairUsesRelay',
+              'hostname/mDNS', 'simultaneousHttpDownloads'
+          ]
+          for needle in required:
+              if needle not in src:
+                  raise SystemExit(f'ERROR: required marker missing after transform: {needle}')
+
+          out = Path('index2.html')
+          out.write_text(src, encoding='utf-8')
+          print(f'Generated {out}: {len(src.splitlines())} lines, {len(src.encode("utf-8"))} bytes')
+          PY
+
+      - name: Validate complete v12.5.0 HTML and JavaScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('index2.html')
+          s = p.read_text(encoding='utf-8')
+          lines = s.splitlines()
+          if len(lines) < 3300:
+              raise SystemExit(f'Validation failed: shortened file ({len(lines)} lines)')
+          if 'Natural Swarm Diagnostic v12.5.0' not in s:
+              raise SystemExit('Validation failed: v12.5.0 title missing')
+          if 'hls.js@1.7.0' not in s or 'p2p-media-loader-hlsjs@4.0.0' not in s:
+              raise SystemExit('Validation failed: pinned dependencies changed')
+          for name in ['attachHlsEvents','wireCoreEvents','correlatePeerIdToBrowserPc','updateVerdict','resetRun']:
+              n = len(re.findall(r'function\\s+' + re.escape(name) + r'\\s*\\(', s))
+              if n != 1:
+                  raise SystemExit(f'Validation failed: {name} definition count={n}')
+          scripts = re.findall(r'<script(?:\\s[^>]*)?>(.*?)</script>', s, flags=re.S|re.I)
+          inline = [x for x in scripts if x.strip()]
+          Path('/tmp/index2-inline.js').write_text('\n'.join(inline), encoding='utf-8')
+          print(f'HTML validation OK: {len(lines)} lines, {len(s.encode("utf-8"))} bytes, {len(inline)} inline scripts')
+          PY
+          node --check /tmp/index2-inline.js
+
+      - name: Commit index2 and remove build machinery
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .hivestream-v125-trigger .github/workflows/.v125-build.yml
+          git add index2.html .hivestream-v125-trigger .github/workflows/.v125-build.yml
+          git commit -m "Build HiveStream Phase 1B diagnostic v12.5.0"
+          git push
