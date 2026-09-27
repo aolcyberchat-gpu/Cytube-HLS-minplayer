@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HiveStream Phase 1B — v12.6.0 syntax-corrected test</title>
+</head>
+<body>
+<div id="status">Loading exact main/index.html and applying the single syntax correction…</div>
+<script>
+(async function () {
+  "use strict";
+  var status = document.getElementById("status");
+  try {
+    var sourceUrl = "https://raw.githubusercontent.com/aolcyberchat-gpu/Cytube-HLS-minplayer/refs/heads/main/index.html";
+    var response = await fetch(sourceUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error("Source fetch failed: HTTP " + response.status);
+    var source = await response.text();
+
+    var bad = "    }\n    }\n  };";
+    var good = "    }\n  };";
+    var occurrences = source.split(bad).length - 1;
+    if (occurrences !== 1) {
+      throw new Error("Expected exactly one STREAM_TRANSPORT brace defect; found " + occurrences);
+    }
+
+    source = source.replace(bad, good);
+
+    status.textContent = "Source corrected; replacing test document…";
+    document.open();
+    document.write(source);
+    document.close();
+  } catch (error) {
+    status.textContent = "INDEX2 LOAD FAILED: " + (error && error.message ? error.message : String(error));
+    console.error(error);
+  }
+})();
+</script>
+</body>
+</html>
