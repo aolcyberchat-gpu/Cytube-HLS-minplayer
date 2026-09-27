@@ -1,15 +1,15 @@
 <!doctype html>
 <!--
-HiveStream Phase 1B — Natural Swarm Diagnostic v12.5.0
+HiveStream Phase 1B — Natural Swarm Diagnostic v12.6.0
 Author: Elwood Edwards (Project Owner / HiveStream Developer)
 Technical implementation and diagnostic revision: GPT-5.6 Luna (OpenAI)
-Fresh v12.5.0 source; historical revisions remain in Git history.
+Fresh v12.6.0 source; historical revisions remain in Git history.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>HiveStream Phase 1B — Natural Swarm Diagnostic v12.5.0</title>
+<title>HiveStream Phase 1B — Natural Swarm Diagnostic v12.6.0</title>
 
 
 
@@ -524,9 +524,9 @@ video {
 
 <body>
 <main>
-  <h1>HiveStream Phase 1B — Natural Swarm Diagnostic v12.5.0</h1>
+  <h1>HiveStream Phase 1B — Natural Swarm Diagnostic v12.6.0</h1>
   <div class="small">
-    Elwood Edwards + GPT-5.6 Luna (OpenAI) — v12.5.0 diagnostic implementation
+    Elwood Edwards + GPT-5.6 Luna (OpenAI) — v12.6.0 diagnostic implementation
   </div>
   <div id="bootStatus" class="small" style="margin-top:6px">BOOT: page script not started</div>
 
@@ -563,12 +563,13 @@ video {
         <label for="transportMode">Transport mode</label>
         <select id="transportMode">
           <option value="hybrid">Hybrid — HTTP + P2P (v9.1 settings)</option>
-          <option value="p2ponly">P2P segment-only — simultaneousHttpDownloads: 0 (manifest/playlist still HTTP)</option>
+          <option value="p2ponly">P2P strict — no HTTP segment scheduler (manifest/playlist still HTTP)</option>
+          <option value="p2precovery">P2P recovery — HTTP rescue allowed after timeout</option>
         </select>
       </div>
       <div>
-        <label for="stallRescueSeconds">Stall-rescue timeout (s, 0 = off)</label>
-        <input id="stallRescueSeconds" type="number" min="0" step="5" value="90">
+        <label for="stallRescueSeconds">HTTP rescue timeout (recovery mode only; 0 = off)</label>
+        <input id="stallRescueSeconds" type="number" min="0" step="5" value="0">
       </div>
       <div>
         <label>&nbsp;</label>
@@ -581,12 +582,12 @@ video {
     </div>
     <p class="small">
       Run the same stream and same variant on two or more browsers. Keep the
-      browser sessions alive long enough for tracker discovery and ICE retries
-      to become visible. Export the JSON from each browser. In P2P-only mode,
-      a stalled/black video with zero P2P bytes is the correct, informative
-      negative outcome, not a bug — the stall-rescue timeout exists only so a
-      real test session can recover instead of hanging forever; a rescue
-      firing is logged and reported as its own distinct event, not hidden.
+    browser sessions alive long enough for tracker discovery and ICE retries
+    to become visible. Export the JSON from each browser. In P2P strict mode,
+    HTTP media-segment rescue is disabled by design: a stalled/black video
+    with zero P2P bytes is the correct negative outcome. Use P2P recovery mode
+    only when you deliberately want a timeout-based HTTP rescue test; any
+    rescue firing is logged and reported as its own distinct event.
     </p>
   </section>
 
@@ -661,8 +662,7 @@ video {
       isP2PUploadDisabled: false
     },
     p2ponly: {
-      
-      label: "P2P segment-only (simultaneousHttpDownloads: 0; manifest/playlist still HTTP)",
+      label: "P2P strict (simultaneousHttpDownloads: 0; manifest/playlist still HTTP)",
       httpDownloadInitialTimeoutMs: 5000,
       simultaneousHttpDownloads: 0,
       simultaneousP2PDownloads: 3,
@@ -670,7 +670,21 @@ video {
       httpDownloadTimeWindow: 3000,
       p2pDownloadTimeWindow: 6000,
       isP2PDisabled: false,
-      isP2PUploadDisabled: false
+      isP2PUploadDisabled: false,
+      stallRescueAllowed: false
+    },
+    p2precovery: {
+      label: "P2P recovery (simultaneousHttpDownloads: 0; HTTP rescue allowed)",
+      httpDownloadInitialTimeoutMs: 5000,
+      simultaneousHttpDownloads: 0,
+      simultaneousP2PDownloads: 3,
+      highDemandTimeWindow: 15,
+      httpDownloadTimeWindow: 3000,
+      p2pDownloadTimeWindow: 6000,
+      isP2PDisabled: false,
+      isP2PUploadDisabled: false,
+      stallRescueAllowed: true
+    }
     }
   };
 
@@ -876,7 +890,7 @@ video {
   var R = {
     test: {
       name: "HiveStream Phase 1B — Natural Swarm Diagnostic",
-      version: "12.5.0",
+      version: "12.6.0",
       startedAt: null,
       elapsedMs: 0,
       authorship: "Elwood Edwards (Project Owner) + GPT-5.6 Luna (OpenAI) " +
@@ -929,7 +943,7 @@ video {
     },
 
     instrumentation: {
-      instrumentationVersion: "12.5.0",
+      instrumentationVersion: "12.6.0",
       engineEventBindings: [],
       receivedP2PEvents: {},
       engineSurface: null,
@@ -1163,7 +1177,8 @@ video {
   }
 
   function transportModeValue() {
-    return transportModeInput.value === "p2ponly" ? "p2ponly" : "hybrid";
+    var value = transportModeInput.value;
+    return value === "p2ponly" || value === "p2precovery" ? value : "hybrid";
   }
 
   function stallRescueSecondsValue() {
@@ -2706,7 +2721,7 @@ video {
 
     R.scheduler.transportMode = cfg.transport;
     R.scheduler.requestedStreamConfig = cloneJson(STREAM_TRANSPORT[cfg.transport]);
-    R.scheduler.stallRescue.enabled = cfg.transport === "p2ponly" && stallRescueSecondsValue() > 0;
+    R.scheduler.stallRescue.enabled = !!STREAM_TRANSPORT[cfg.transport].stallRescueAllowed && stallRescueSecondsValue() > 0;
     R.scheduler.stallRescue.timeoutMs = stallRescueSecondsValue() * 1000;
     R.scheduler.stallRescue.armedAt = R.scheduler.stallRescue.enabled ? now() : null;
 
@@ -2809,7 +2824,7 @@ video {
     R = {
       test: {
         name: "HiveStream Phase 1B — Natural Swarm Diagnostic",
-        version: "12.5.0",
+        version: "12.6.0",
         startedAt: now(),
         elapsedMs: 0,
         authorship: "Elwood Edwards (Project Owner) + GPT-5.6 Luna (OpenAI) " +
@@ -2856,7 +2871,7 @@ video {
         announceTrackers: TRACKER_HINTS.slice()
       },
       instrumentation: {
-        instrumentationVersion: "12.5.0",
+        instrumentationVersion: "12.6.0",
         engineEventBindings: [],
         receivedP2PEvents: {},
         engineSurface: null,
@@ -3375,7 +3390,7 @@ video {
       export: {
         savedAt: now(),
         format: "HiveStream Phase 1B diagnostic JSON",
-        exporterVersion: "12.5.0",
+        exporterVersion: "12.6.0",
         privacy: "Diagnostic export may include WebRTC ICE candidate IP addresses, ports, protocols, foundations, and related network metadata because network-path diagnosis is an explicit purpose of this experiment. Cookies, browsing history, precise device location, and unrelated local-storage contents are not exported."
       },
       dependencies: R.dependencies,
@@ -3564,7 +3579,7 @@ video {
       });
 
       // Build the report and stringify it inside the same error boundary.
-      // v12.5.0 previously performed both operations before entering its try
+      // v12.6.0 previously performed both operations before entering its try
       // block, so failures here escaped the save-specific diagnostics.
       report = publicReport();
 
@@ -3585,7 +3600,7 @@ video {
         ? report.transport.mode
         : "unknown";
 
-      filename = "HiveStream-Phase1B-v12.5.0-" + transportTag + "-" +
+      filename = "HiveStream-Phase1B-v12.6.0-" + transportTag + "-" +
         label + "-" + stamp + ".json";
 
       phase = "blob-create";
