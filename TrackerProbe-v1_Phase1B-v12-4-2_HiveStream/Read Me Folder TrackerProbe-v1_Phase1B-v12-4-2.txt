@@ -1,0 +1,4 @@
+Folder <TrackerProbe-v1_Phase1B-v12-4-2_HiveStream> contains test for <HiveStream_Tracker_Probe_v1.html> & <HiveStream_Phase_1B_Natural_Swarm_Diagnostic_v12-4-2.html> ran individual and concurrently on phone and laptop using 5g or wifi.
+
+Laptop mostly ran tracker probe while the phone ran natural swarm diagnostic 12.4.2.
+I ran v12.4.2 on the laptop as well

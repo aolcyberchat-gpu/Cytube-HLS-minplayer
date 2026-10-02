@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HiveStream Tracker Probe v1</title>
+<!-- Authors: Elwood Edwards (Project Owner) + Claude (Anthropic, Claude Sonnet 5)
+     Purpose: ask each WebTorrent tracker directly how many peers it knows for the
+     natural-swarm infoHashes seen in v12.4.2 runs. Sends scrape + a numwant:0 announce
+     (no offers, so it cannot create WebRTC connections) and logs every raw reply.
+     Does NOT load hls.js or p2p-media-loader. Run alone, on the same network as the test. -->
+<style>
+  :root { --bg:#14171c; --fg:#e6e8eb; --mut:#9aa3ad; --line:#2a3039; --ok:#7fd08a; --bad:#ff8a80; --warn:#f2c46d; --pan:#1b2027; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f6f7f9; --fg:#1a1d21; --mut:#5d6672; --line:#d5d9df; --ok:#1f7a35; --bad:#b3261e; --warn:#8a5a00; --pan:#ffffff; }
+  }
+  html { box-sizing:border-box; }
+  *, *::before, *::after { box-sizing:inherit; }
+  body { margin:0; padding:14px; background:var(--bg); color:var(--fg);
+         font:15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  h1 { font-size:19px; margin:0 0 4px; }
+  p.sub { margin:0 0 14px; color:var(--mut); font-size:13px; }
+  label { display:block; font-size:13px; color:var(--mut); margin:10px 0 4px; }
+  textarea, input { width:100%; background:var(--pan); color:var(--fg); border:1px solid var(--line);
+         border-radius:6px; padding:8px; font:13px ui-monospace, Menlo, Consolas, monospace; }
+  textarea { min-height:112px; }
+  .row { display:flex; gap:8px; margin:12px 0; flex-wrap:wrap; }
+  button { background:var(--pan); color:var(--fg); border:1px solid var(--line); border-radius:6px;
+         padding:10px 14px; font:inherit; cursor:pointer; }
+  button.go { border-color:var(--ok); }
+  button:focus-visible, textarea:focus-visible, input:focus-visible { outline:2px solid var(--warn); outline-offset:2px; }
+  .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:6px; background:var(--pan); }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap;
+         font-family:ui-monospace, Menlo, Consolas, monospace; }
+  th { color:var(--mut); font-weight:600; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  pre { margin:10px 0 0; padding:10px; background:var(--pan); border:1px solid var(--line); border-radius:6px;
+        font:12px/1.4 ui-monospace, Menlo, Consolas, monospace; max-height:340px; overflow:auto; white-space:pre-wrap; word-break:break-all; }
+</style>
+</head>
+<body>
+<h1>HiveStream Tracker Probe v1</h1>
+<p class="sub">Asks each tracker directly whether anyone is announced for these swarm hashes. Standalone: no video, no p2p library.</p>
+
+<label for="trackers">Tracker URLs (one per line)</label>
+<textarea id="trackers">wss://tracker.novage.com.ua
+wss://tracker.webtorrent.dev
+wss://tracker.openwebtorrent.com
+wss://open.ftorrent.com
+wss://tracker.files.fm:7073/announce
+wss://tracker.btorrent.xyz</textarea>
+<p class="sub">First three are the p2p-media-loader v4 defaults (what the harness uses). The rest are extra candidates: open.ftorrent.com is on the ngosang list, files.fm is listed by a third-party mirror, and btorrent.xyz was reported to serve a self-signed certificate that browsers refuse, so it is here as a control that should fail.</p>
+<div class="row"><button id="load">Load ngosang ws list (adds to the box)</button></div>
+
+<label for="hashes">infoHashes (20 characters each, one per line; first is the 720p swarm all v12.4.2 segments used)</label>
+<textarea id="hashes">Dd+yrwrnofWI3vWhfz1l
+pu1dpR/ZE5b38kDKRVp+
+BP5Ha1tQdWG2KlAqCGsA
+i0q7IwL7towfhu4Xnofx
+7NwtzJAqpJsMdvx7ddbS</textarea>
+
+<label for="wait">Wait per tracker (seconds)</label>
+<input id="wait" type="number" min="3" max="60" value="12">
+
+<div class="row">
+  <button class="go" id="go">Probe trackers</button>
+  <button id="copy">Copy JSON</button>
+  <button id="save">Save JSON</button>
+</div>
+
+<div class="tablewrap"><table id="tbl">
+  <thead><tr><th>tracker</th><th>ws</th><th>open ms</th><th>hash</th><th>seeders</th><th>leechers</th><th>source</th></tr></thead>
+  <tbody></tbody>
+</table></div>
+<pre id="log">Idle.</pre>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var report = { tool: "HiveStream Tracker Probe v1", startedAt: null, userAgent: navigator.userAgent, trackers: [] };
+  var logEl = $("log"), tbody = $("tbl").querySelector("tbody");
+
+  function now() { return new Date().toISOString(); }
+  function log(msg) { logEl.textContent += "\n[" + now().slice(11, 23) + "] " + msg; logEl.scrollTop = logEl.scrollHeight; }
+  function lines(id) { return $(id).value.split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean); }
+  function randId() {
+    var cs = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", s = "-PM0400-";
+    while (s.length < 20) s += cs[Math.floor(Math.random() * cs.length)];
+    return s;
+  }
+  function addRow(tr, ws, openMs, hash, seeders, leechers, source, cls) {
+    var row = document.createElement("tr");
+    [tr.replace("wss://", ""), ws, openMs, hash.slice(0, 8) + "…", seeders, leechers, source].forEach(function (v, i) {
+      var td = document.createElement("td"); td.textContent = v;
+      if (i === 1 && cls) td.className = cls;
+      row.appendChild(td);
+    });
+    tbody.appendChild(row);
+  }
+
+  function probeOne(url, hashes, waitMs) {
+    return new Promise(function (resolve) {
+      var rec = { url: url, openedAt: null, openMs: null, closeCode: null, closeReason: null, error: false,
+                  messages: [], counts: {} };
+      var t0 = performance.now(), ws, done = false, peerId = randId();
+      function finish(why) {
+        if (done) return; done = true;
+        try { if (ws && ws.readyState === 1) {
+          hashes.forEach(function (h) { ws.send(JSON.stringify({ action: "announce", event: "stopped", info_hash: h, peer_id: peerId, numwant: 0, uploaded: 0, downloaded: 0, left: 1, offers: [] })); });
+          ws.close();
+        } } catch (e) {}
+        rec.finishedBecause = why;
+        var status = rec.openedAt ? "open" : (rec.error ? "error" : "no-open");
+        hashes.forEach(function (h) {
+          var c = rec.counts[h];
+          addRow(url, status + (rec.closeCode ? " (" + rec.closeCode + ")" : ""), rec.openMs == null ? "–" : rec.openMs, h,
+                 c ? c.complete : "–", c ? c.incomplete : "–", c ? c.source : "no reply",
+                 rec.openedAt ? (c ? "ok" : "warn") : "bad");
+        });
+        log(url + " done: " + why);
+        report.trackers.push(rec); resolve();
+      }
+      try { ws = new WebSocket(url); } catch (e) { rec.error = String(e); log(url + " constructor error: " + e); return finish("constructor-error"); }
+      var timer = setTimeout(function () { finish("timeout"); }, waitMs);
+      ws.onopen = function () {
+        rec.openedAt = now(); rec.openMs = Math.round(performance.now() - t0);
+        log(url + " OPEN in " + rec.openMs + " ms");
+        ws.send(JSON.stringify({ action: "scrape", info_hash: hashes }));
+        hashes.forEach(function (h) {
+          ws.send(JSON.stringify({ action: "announce", event: "started", info_hash: h, peer_id: peerId, numwant: 0,
+                                   uploaded: 0, downloaded: 0, left: 1, offers: [] }));
+        });
+      };
+      ws.onmessage = function (ev) {
+        var raw = String(ev.data), m;
+        rec.messages.push({ at: now(), raw: raw.slice(0, 600) });
+        try { m = JSON.parse(raw); } catch (e) { log(url + " non-JSON: " + raw.slice(0, 120)); return; }
+        if (m["failure reason"]) log(url + " FAILURE: " + m["failure reason"]);
+        if (m.action === "scrape" && m.files) {
+          Object.keys(m.files).forEach(function (k) { rec.counts[k] = { complete: m.files[k].complete, incomplete: m.files[k].incomplete, source: "scrape" }; });
+          log(url + " scrape reply for " + Object.keys(m.files).length + " hash(es)");
+        } else if (m.action === "announce" && m.info_hash != null && m.complete != null) {
+          if (!rec.counts[m.info_hash] || rec.counts[m.info_hash].source !== "scrape")
+            rec.counts[m.info_hash] = { complete: m.complete, incomplete: m.incomplete, source: "announce" };
+          log(url + " announce reply " + m.info_hash.slice(0, 6) + "… seeders=" + m.complete + " leechers=" + m.incomplete);
+        }
+        if (Object.keys(rec.counts).length >= hashes.length) { clearTimeout(timer); setTimeout(function () { finish("all-hashes-answered"); }, 400); }
+      };
+      ws.onerror = function () { rec.error = true; log(url + " socket ERROR (page cannot see the cause; check network/VPN)"); };
+      ws.onclose = function (ev) { rec.closeCode = ev.code; rec.closeReason = ev.reason; clearTimeout(timer); finish("closed code " + ev.code); };
+    });
+  }
+
+  $("go").onclick = function () {
+    var hashes = lines("hashes"), urls = lines("trackers"), wait = Math.max(3, +$("wait").value || 12) * 1000;
+    var bad = hashes.filter(function (h) { return h.length !== 20; });
+    if (bad.length) { alert("Each infoHash must be exactly 20 characters. Bad: " + bad.join(", ")); return; }
+    report.startedAt = now(); report.trackers = []; tbody.innerHTML = ""; logEl.textContent = "Probing " + urls.length + " tracker(s) for " + hashes.length + " hash(es)…";
+    $("go").disabled = true;
+    urls.reduce(function (p, u) { return p.then(function () { return probeOne(u, hashes, wait); }); }, Promise.resolve())
+      .then(function () { report.finishedAt = now(); log("All done. Seeders+leechers of 0 means the tracker knows nobody for that hash."); $("go").disabled = false; });
+  };
+  $("load").onclick = function () {
+    var u = "https://cdn.jsdelivr.net/gh/ngosang/trackerslist@master/trackers_all_ws.txt";
+    fetch(u, { cache: "no-store" }).then(function (r) { return r.text(); }).then(function (t) {
+      var have = {}; lines("trackers").forEach(function (x) { have[x.replace(/:443(\/announce)?$/, "").replace(/\/announce$/, "")] = 1; });
+      var add = t.split(/\r?\n/).map(function (x) { return x.trim(); }).filter(function (x) { return /^wss?:\/\//.test(x); })
+        .filter(function (x) { return !have[x.replace(/:443(\/announce)?$/, "").replace(/\/announce$/, "")]; });
+      $("trackers").value = ($("trackers").value.trim() + "\n" + add.join("\n")).trim();
+      log("ngosang list loaded; added " + add.length + " new tracker(s).");
+    }).catch(function (e) { log("Could not load list: " + e); });
+  };
+  function json() { return JSON.stringify(report, null, 2); }
+  $("copy").onclick = function () {
+    if (navigator.clipboard) navigator.clipboard.writeText(json()).then(function () { log("JSON copied."); }, function () { log("Copy blocked; use Save JSON."); });
+    else log("Clipboard unavailable; use Save JSON.");
+  };
+  $("save").onclick = function () {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([json()], { type: "application/json" }));
+    a.download = "HiveStream-TrackerProbe-v1-" + now().replace(/[:.]/g, "") + ".json";
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+})();
+</script>
+</body>
+</html>

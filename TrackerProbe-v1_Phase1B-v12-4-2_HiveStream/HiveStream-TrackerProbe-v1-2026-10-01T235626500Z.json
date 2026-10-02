@@ -1,0 +1,176 @@
+{
+  "tool": "HiveStream Tracker Probe v1",
+  "startedAt": "2026-10-01T23:55:02.578Z",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+  "trackers": [
+    {
+      "url": "wss://tracker.novage.com.ua",
+      "openedAt": null,
+      "openMs": null,
+      "closeCode": 1006,
+      "closeReason": "",
+      "error": true,
+      "messages": [],
+      "counts": {},
+      "finishedBecause": "closed code 1006"
+    },
+    {
+      "url": "wss://tracker.webtorrent.dev",
+      "openedAt": "2026-10-01T23:55:04.163Z",
+      "openMs": 1084,
+      "closeCode": 1006,
+      "closeReason": "",
+      "error": false,
+      "messages": [
+        {
+          "at": "2026-10-01T23:55:04.478Z",
+          "raw": "{\"action\":\"scrape\",\"files\":{}}"
+        },
+        {
+          "at": "2026-10-01T23:55:05.027Z",
+          "raw": "{\"action\":\"announce\",\"info_hash\":\"Dd+yrwrnofWI3vWhfz1l\",\"complete\":0,\"incomplete\":1,\"interval\":120}"
+        },
+        {
+          "at": "2026-10-01T23:55:05.028Z",
+          "raw": "{\"action\":\"announce\",\"info_hash\":\"pu1dpR/ZE5b38kDKRVp+\",\"complete\":0,\"incomplete\":1,\"interval\":120}"
+        },
+        {
+          "at": "2026-10-01T23:55:05.029Z",
+          "raw": "{\"action\":\"announce\",\"info_hash\":\"BP5Ha1tQdWG2KlAqCGsA\",\"complete\":0,\"incomplete\":1,\"interval\":120}"
+        },
+        {
+          "at": "2026-10-01T23:55:05.029Z",
+          "raw": "{\"action\":\"announce\",\"info_hash\":\"i0q7IwL7towfhu4Xnofx\",\"complete\":0,\"incomplete\":1,\"interval\":120}"
+        },
+        {
+          "at": "2026-10-01T23:55:05.029Z",
+          "raw": "{\"action\":\"announce\",\"info_hash\":\"7NwtzJAqpJsMdvx7ddbS\",\"complete\":0,\"incomplete\":1,\"interval\":120}"
+        }
+      ],
+      "counts": {
+        "Dd+yrwrnofWI3vWhfz1l": {
+          "complete": 0,
+          "incomplete": 1,
+          "source": "announce"
+        },
+        "pu1dpR/ZE5b38kDKRVp+": {
+          "complete": 0,
+          "incomplete": 1,
+          "source": "announce"
+        },
+        "BP5Ha1tQdWG2KlAqCGsA": {
+          "complete": 0,
+          "incomplete": 1,
+          "source": "announce"
+        },
+        "i0q7IwL7towfhu4Xnofx": {
+          "complete": 0,
+          "incomplete": 1,
+          "source": "announce"
+        },
+        "7NwtzJAqpJsMdvx7ddbS": {
+          "complete": 0,
+          "incomplete": 1,
+          "source": "announce"
+        }
+      },
+      "finishedBecause": "all-hashes-answered"
+    },
+    {
+      "url": "wss://tracker.openwebtorrent.com",
+      "openedAt": "2026-10-01T23:55:06.179Z",
+      "openMs": 736,
+      "closeCode": 1006,
+      "closeReason": "",
+      "error": false,
+      "messages": [],
+      "counts": {},
+      "finishedBecause": "closed code 1006"
+    },
+    {
+      "url": "wss://open.ftorrent.com",
+      "openedAt": "2026-10-01T23:55:07.003Z",
+      "openMs": 576,
+      "closeCode": 1006,
+      "closeReason": "",
+      "error": false,
+      "messages": [
+        {
+          "at": "2026-10-01T23:55:07.137Z",
+          "raw": "{\"action\":\"scrape\",\"files\":{}}"
+        },
+        {
+          "at": "2026-10-01T23:55:07.282Z",
+          "raw": "{\"action\":\"announce\",\"info_hash\":\"Dd+yrwrnofWI3vWhfz1l\",\"complete\":0,\"incomplete\":1,\"interval\":120}"
+        },
+        {
+          "at": "2026-10-01T23:55:07.283Z",
+          "raw": "{\"action\":\"announce\",\"info_hash\":\"pu1dpR/ZE5b38kDKRVp+\",\"complete\":0,\"incomplete\":1,\"interval\":120}"
+        },
+        {
+          "at": "2026-10-01T23:55:07.283Z",
+          "raw": "{\"action\":\"announce\",\"info_hash\":\"BP5Ha1tQdWG2KlAqCGsA\",\"complete\":0,\"incomplete\":1,\"interval\":120}"
+        },
+        {
+          "at": "2026-10-01T23:55:07.284Z",
+          "raw": "{\"action\":\"announce\",\"info_hash\":\"i0q7IwL7towfhu4Xnofx\",\"complete\":0,\"incomplete\":1,\"interval\":120}"
+        },
+        {
+          "at": "2026-10-01T23:55:07.284Z",
+          "raw": "{\"action\":\"announce\",\"info_hash\":\"7NwtzJAqpJsMdvx7ddbS\",\"complete\":0,\"incomplete\":1,\"interval\":120}"
+        }
+      ],
+      "counts": {
+        "Dd+yrwrnofWI3vWhfz1l": {
+          "complete": 0,
+          "incomplete": 1,
+          "source": "announce"
+        },
+        "pu1dpR/ZE5b38kDKRVp+": {
+          "complete": 0,
+          "incomplete": 1,
+          "source": "announce"
+        },
+        "BP5Ha1tQdWG2KlAqCGsA": {
+          "complete": 0,
+          "incomplete": 1,
+          "source": "announce"
+        },
+        "i0q7IwL7towfhu4Xnofx": {
+          "complete": 0,
+          "incomplete": 1,
+          "source": "announce"
+        },
+        "7NwtzJAqpJsMdvx7ddbS": {
+          "complete": 0,
+          "incomplete": 1,
+          "source": "announce"
+        }
+      },
+      "finishedBecause": "all-hashes-answered"
+    },
+    {
+      "url": "wss://tracker.files.fm:7073/announce",
+      "openedAt": null,
+      "openMs": null,
+      "closeCode": 1006,
+      "closeReason": "",
+      "error": true,
+      "messages": [],
+      "counts": {},
+      "finishedBecause": "closed code 1006"
+    },
+    {
+      "url": "wss://tracker.btorrent.xyz",
+      "openedAt": null,
+      "openMs": null,
+      "closeCode": 1006,
+      "closeReason": "",
+      "error": true,
+      "messages": [],
+      "counts": {},
+      "finishedBecause": "closed code 1006"
+    }
+  ],
+  "finishedAt": "2026-10-01T23:55:08.809Z"
+}
