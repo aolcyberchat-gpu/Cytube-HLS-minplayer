@@ -1,0 +1,3 @@
+files are from Google drive, Claude has read and write access to Google Drive.
+Here are some files in that directory.
+Claude wrote most of not all of it.
