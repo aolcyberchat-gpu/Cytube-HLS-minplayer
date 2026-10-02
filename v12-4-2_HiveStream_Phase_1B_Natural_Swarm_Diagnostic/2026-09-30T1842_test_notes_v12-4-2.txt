@@ -1,0 +1,23 @@
+Test was ran on one device (phone) to see if ANY peer segments were transferred or received from unknown peers 'out in the wild' using a naturally derived swarm id [as a more narrower test is connecting a known peer (my phone) to another known peer (my laptop) then using a custom swarm id is an even more narrower/specific test/result.]
+
+Test ran html file
+<HiveStream_Phase_1B_Natural_Swarm_Diagnostic_v12-4-2.html>
+Ran locally from phone
+<content://media/external/file/1000039503>
+Using DSL WiFi network and VPN on DSL WiFi on phone creating these json files;
+
+HiveStream-Phase1B-v12.4.2-p2ponly-VPN-VIVALDI-2026-10-01T011956221Z.json
+HiveStream-Phase1B-v12.4.2-p2ponly-VPN-Vivaldi-2026-10-01T011430037Z.json
+HiveStream-Phase1B-v12.4.2-hybrid-VPN-2026-10-01T005736040Z.json
+HiveStream-Phase1B-v12.4.2-p2ponly-VPN-2026-10-01T004858092Z.json
+HiveStream-Phase1B-v12.4.2-p2ponly-VPN-2026-10-01T003951291Z.json
+HiveStream-Phase1B-v12.4.2-p2ponly-VPN-2026-10-01T003145704Z.json
+HiveStream-Phase1B-v12.4.2-p2ponly-Chrome-mobile-2026-10-01T002558682Z.json
+HiveStream-Phase1B-v12.4.2-p2ponly-Chrome-mobile-2026-10-01T002332431Z.json
+HiveStream-Phase1B-v12.4.2-p2ponly-Chrome-mobile-2026-10-01T001616623Z.json
+HiveStream-Phase1B-v12.4.2-p2ponly-Chrome-mobile-2026-10-01T000958652Z.json
+HiveStream-Phase1B-v12.4.2-hybrid-Chrome-mobile-2026-10-01T000412912Z.json
+HiveStream-Phase1B-v12.4.2-hybrid-Chrome-mobile-2026-09-30T235738329Z.json
+
+Two image screenshots were taken using Vivaldi mobile browser screenshot tool, 
+[Vivaldi]_20260930_182341.jpg
